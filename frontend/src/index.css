@@ -6,7 +6,34 @@
   }
 
   body {
-    @apply grid place-items-center min-w-[320px] min-h-screen relative m-0 bg-background text-foreground;
+    @apply min-w-[320px] min-h-screen relative m-0 bg-background text-foreground;
+  }
+
+  /* Custom Scrollbar Styles */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: oklch(0.556 0 0 / 20%);
+    border-radius: 9999px;
+  }
+
+  .dark ::-webkit-scrollbar-thumb {
+    background: oklch(1 0 0 / 10%);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: oklch(0.556 0 0 / 40%);
+  }
+
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background: oklch(1 0 0 / 20%);
   }
 }
 
