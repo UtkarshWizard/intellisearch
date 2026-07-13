@@ -29,7 +29,7 @@ export async function rateLimiter(req: Request, res: Response, next: NextFunctio
             }
         });
 
-        console.log(`[RateLimiter] Found ${userQueries.length} user queries.`);
+        // console.log(`[RateLimiter] Found ${userQueries.length} user queries.`);
 
         if (userQueries.length >= maxRequests) {
             const oldestQuery = userQueries[0];

@@ -2,6 +2,8 @@ import { supabase } from "@/lib/client";
 import { BACKEND_URL } from "@/lib/config";
 import type { User } from "@supabase/supabase-js";
 import axios from "axios";
+import { marked } from "marked";
+import hljs from "highlight.js";
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router";
 import {
@@ -35,42 +37,124 @@ interface ConversationHistory {
     }[];
 }
 
-// Simple markdown formatter function that handles bold (**), italics (*), bullet lists (- or *), links ([text](url)) and spacing.
-function formatMarkdown(text: string) {
-    if (!text) return "";
+// ---------------------------------------------------------------------------
+// Markdown rendering via marked (GFM) + highlight.js + CSS class injection
+// ---------------------------------------------------------------------------
 
-    // Escape HTML tags to prevent injections but keep our formatting tags
-    let clean = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+// Configure marked: GFM enabled (tables, task lists, etc.), line breaks on \n
+marked.use({ gfm: true, breaks: true });
 
-    // We want to recover the format tags we specifically use or expect from the API (like <question>)
-    clean = clean.replace(/&lt;question&gt;/g, "<question>").replace(/&lt;\/question&gt;/g, "</question>");
-    clean = clean.replace(/&lt;ANSWER&gt;/g, "<ANSWER>").replace(/&lt;\/ANSWER&gt;/g, "</ANSWER>");
-    clean = clean.replace(/&lt;FOLLOW_UPS&gt;/g, "<FOLLOW_UPS>").replace(/&lt;\/FOLLOW_UPS&gt;/g, "</FOLLOW_UPS>");
-
-    // Bold formatting: **text**
-    clean = clean.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
-
-    // Italics formatting: *text*
-    clean = clean.replace(/\*(.*?)\*/g, "<em>$1</em>");
-
-    // Links: [label](url)
-    clean = clean.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-orange-600 dark:text-orange-400 hover:underline inline-flex items-center gap-1">$1 <svg class="w-3 h-3 inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg></a>');
-
-    // Bullet points: lines starting with "- " or "* "
-    const lines = clean.split("\n");
-    const formattedLines = lines.map(line => {
-        const trimmed = line.trim();
-        if (trimmed.startsWith("- ")) {
-            return `<li class="ml-4 list-disc dark:text-slate-300 my-1">${trimmed.substring(2)}</li>`;
-        }
-        if (trimmed.startsWith("* ") && !trimmed.endsWith("*")) {
-            return `<li class="ml-4 list-disc dark:text-slate-300 my-1">${trimmed.substring(2)}</li>`;
-        }
-        return line;
-    });
-
-    return formattedLines.join("\n");
+/**
+ * Strip our custom XML-like protocol tags from the LLM response before
+ * passing to the markdown renderer. The <ANSWER>/<FOLLOW_UPS>/<question>
+ * wrappers are structural only and should never reach the renderer.
+ */
+function stripProtocolTags(text: string): string {
+    return text
+        .replace(/<ANSWER>/g, "")
+        .replace(/<\/ANSWER>/g, "")
+        .replace(/<FOLLOW_UPS>[\s\S]*/, "") // strip everything from FOLLOW_UPS onwards
+        .trim();
 }
+
+/**
+ * Post-process marked's HTML output to:
+ * 1. Inject CSS class names for our design system
+ * 2. Wrap tables in a scrollable container
+ * 3. Apply syntax highlighting to fenced code blocks
+ * 4. Add a Copy button to code blocks
+ */
+function postProcess(html: string): string {
+    // Tables — wrap in scrollable div and add classes
+    html = html.replace(/<table>/g, '<div class="prose-table-wrapper"><table class="prose-table">');
+    html = html.replace(/<\/table>/g, "</table></div>");
+    html = html.replace(/<thead>/g, '<thead class="prose-thead">');
+    html = html.replace(/<th>/g, '<th class="prose-th">');
+    html = html.replace(/<th align="(.*?)">/g, '<th class="prose-th" style="text-align:$1">');
+    html = html.replace(/<tr>/g, '<tr class="prose-tr">');
+    html = html.replace(/<td>/g, '<td class="prose-td">');
+    html = html.replace(/<td align="(.*?)">/g, '<td class="prose-td" style="text-align:$1">');
+
+    // Fenced code blocks: apply highlight.js + add Copy button + header
+    html = html.replace(
+        /<pre><code class="language-(\w+)">([\s\S]*?)<\/code><\/pre>/g,
+        (_, lang: string, code: string) => {
+            // marked HTML-encodes the code content; decode before highlighting
+            const decoded = code
+                .replace(/&amp;/g, "&")
+                .replace(/&lt;/g, "<")
+                .replace(/&gt;/g, ">")
+                .replace(/&quot;/g, '"')
+                .replace(/&#39;/g, "'");
+            const language = hljs.getLanguage(lang) ? lang : "plaintext";
+            const highlighted = hljs.highlight(decoded, { language }).value;
+            return `<div class="prose-code-block">
+  <div class="prose-code-header">
+    <span class="prose-code-lang">${language}</span>
+    <button class="prose-copy-btn" onclick="(function(btn){const code=btn.closest('.prose-code-block').querySelector('code');navigator.clipboard.writeText(code.innerText);btn.textContent='Copied!';setTimeout(()=>btn.textContent='Copy',2000)})(this)">Copy</button>
+  </div>
+  <pre class="prose-pre"><code class="hljs language-${language}">${highlighted}</code></pre>
+</div>`;
+        }
+    );
+    // Plain code blocks (no language tag)
+    html = html.replace(
+        /<pre><code>([\s\S]*?)<\/code><\/pre>/g,
+        (_, code: string) => {
+            return `<div class="prose-code-block">
+  <div class="prose-code-header">
+    <span class="prose-code-lang">plaintext</span>
+    <button class="prose-copy-btn" onclick="(function(btn){const code=btn.closest('.prose-code-block').querySelector('code');navigator.clipboard.writeText(code.innerText);btn.textContent='Copied!';setTimeout(()=>btn.textContent='Copy',2000)})(this)">Copy</button>
+  </div>
+  <pre class="prose-pre"><code class="hljs">${code}</code></pre>
+</div>`;
+        }
+    );
+
+    // Inline code
+    html = html.replace(/<code>/g, '<code class="prose-inline-code">');
+
+    // Headings
+    html = html.replace(/<h1>/g, '<h1 class="prose-h1">');
+    html = html.replace(/<h2>/g, '<h2 class="prose-h2">');
+    html = html.replace(/<h3>/g, '<h3 class="prose-h3">');
+    html = html.replace(/<h4>/g, '<h4 class="prose-h4">');
+
+    // Blockquotes
+    html = html.replace(/<blockquote>/g, '<blockquote class="prose-blockquote">');
+
+    // Lists
+    html = html.replace(/<ul>/g, '<ul class="prose-ul">');
+    html = html.replace(/<ol>/g, '<ol class="prose-ol">');
+    html = html.replace(/<li>/g, '<li class="prose-li">');
+
+    // Paragraphs
+    html = html.replace(/<p>/g, '<p class="prose-p">');
+
+    // Horizontal rule
+    html = html.replace(/<hr>/g, '<hr class="prose-hr">');
+
+    // Links — open in new tab + styled + external icon
+    html = html.replace(
+        /<a href="(.*?)">/g,
+        '<a href="$1" target="_blank" rel="noopener noreferrer" class="prose-link">'
+    );
+
+    // Strong / em
+    html = html.replace(/<strong>/g, '<strong class="prose-strong">');
+    html = html.replace(/<em>/g, '<em class="prose-em">');
+
+    return html;
+}
+
+/** Full markdown → HTML pipeline */
+function formatMarkdown(text: string): string {
+    if (!text) return "";
+    const cleaned = stripProtocolTags(text);
+    const rawHtml = marked.parse(cleaned) as string;
+    return postProcess(rawHtml);
+}
+
 
 export default function Conversation() {
     const [user, setUser] = useState<User | null>(null);
@@ -417,16 +501,29 @@ export default function Conversation() {
             } else {
                 // Follow-up: append the streamed assistant message directly to local state.
                 // No re-fetch, no skeleton — the user already sees the answer.
-                // Extract just the answer portion (before the <SOURCES> delimiter)
+
+                // Extract the answer portion (before the <SOURCES> delimiter)
                 const answerOnly = rawData.includes("<SOURCES>")
                     ? rawData.split("<SOURCES>")[0] || ""
                     : rawData;
-                // Capture sources from state at this moment
-                const currentSources = streamingSources;
+
+                // Parse sources directly from rawData — DO NOT use `streamingSources` state here.
+                // `streamingSources` is a stale closure value from the last render (always []);
+                // setStreamingSources() is async and never updates the variable in this scope.
+                let parsedSources: { url: string }[] = [];
+                if (rawData.includes("<SOURCES>")) {
+                    const sourcesPart = rawData.split("<SOURCES>")[1]?.split("</SOURCES>")[0] || "";
+                    try {
+                        parsedSources = JSON.parse(sourcesPart.trim());
+                    } catch {
+                        parsedSources = [];
+                    }
+                }
+
                 const assistantMsg = {
                     id: Math.random().toString(),
                     role: "ASSISTANT" as const,
-                    content: JSON.stringify({ answer: answerOnly, sources: currentSources }),
+                    content: JSON.stringify({ answer: answerOnly, sources: parsedSources }),
                     createdAt: new Date().toISOString()
                 };
                 setActiveConversation(prev => prev ? {

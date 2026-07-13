@@ -160,7 +160,7 @@ app.post("/conversation", authMiddleware, rateLimiter, async (req, res) => {
     }
 });
 
-app.post("/conversation/follow_up", authMiddleware, rateLimiter, async ( req, res) => {
+app.post("/conversation/follow_up", authMiddleware, async ( req, res) => {
     const { conversationId, query } = req.body;
 
     if (!conversationId || !query) {
@@ -228,13 +228,30 @@ app.post("/conversation/follow_up", authMiddleware, rateLimiter, async ( req, re
         const decisionResponse = await openai.chat.completions.create({
             model: "auto",
             messages: [{ role: "user", content: decisionPrompt }],
-            max_tokens: 10     // TO restrict the model to only output SEARCH or NO_SEARCH
+            max_tokens: 150 // enough for the JSON object {need_search, optimized_query}
         });
 
-        const decisionText = (decisionResponse.choices[0]?.message?.content ?? "").trim().toUpperCase();
-        const needsWebSearch = decisionText.startsWith("SEARCH");
+        let needsWebSearch = true;
+        let optimizedQuery = query; // fallback to original if parsing fails
+        try {
+            const decisionRaw = (decisionResponse.choices[0]?.message?.content ?? "").trim();
+            // Strip possible markdown code fences some models add despite instructions
+            const decisionJson = decisionRaw.replace(/^```[\w]*\n?/, "").replace(/\n?```$/, "");
+            const decision = JSON.parse(decisionJson) as { need_search: boolean; optimized_query: string };
+            needsWebSearch = Boolean(decision.need_search);
+            optimizedQuery = decision.optimized_query?.trim() || query;
+        } catch {
+            // Malformed JSON — default to search with original query
+            needsWebSearch = true;
+            optimizedQuery = query;
+        }
 
-        // console.log(`[follow_up] Web search decision for query "${query}": ${needsWebSearch ? "SEARCH" : "NO_SEARCH"}`);
+        console.log({
+            needsWebSearch,
+            optimizedQuery
+        });
+
+        console.log(`[follow_up] Web search decision for query "${query}": ${needsWebSearch ? "SEARCH" : "NO_SEARCH"}`);
 
         // Build the messages array from conversation history for the final LLM call
         const messagesForLLM: { role: "system" | "user" | "assistant"; content: string }[] = [
@@ -257,23 +274,25 @@ app.post("/conversation/follow_up", authMiddleware, rateLimiter, async ( req, re
         let sources: { url: string }[] = [];
 
         if (needsWebSearch) {
-            // Perform web search and include results in the prompt
+            // Perform web search using the optimized query for better results
             const tavilyClient = tavily({ apiKey: process.env.TAVILY_API_KEY });
-            const webSearchResponse = await tavilyClient.search(query, {
+            const webSearchResponse = await tavilyClient.search(optimizedQuery, {
                 includeAnswer: "basic",
                 searchDepth: "advanced"
             });
             const webSearchResult = webSearchResponse.results;
             sources = webSearchResult.map(result => ({ url: result.url }));
 
+            console.log("Web search result : ",  webSearchResult);
+
             const nextPrompt = PROMPT_TEMPLATE
                 .replace("{{WEB_SEARCH_RESULTS}}", JSON.stringify(webSearchResult))
-                .replace("{{USER_QUERY}}", query);
+                .replace("{{USER_QUERY}}", optimizedQuery);
             messagesForLLM.push({ role: "user", content: nextPrompt });
         } else {
             // No web search — answer from conversation history and general knowledge
             const nextPrompt = NO_SEARCH_PROMPT_TEMPLATE
-                .replace("{{USER_QUERY}}", query);
+                .replace("{{USER_QUERY}}", optimizedQuery);
             messagesForLLM.push({ role: "user", content: nextPrompt });
         }
 
