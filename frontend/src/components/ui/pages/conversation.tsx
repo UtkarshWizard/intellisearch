@@ -380,31 +380,61 @@ export default function Conversation() {
                 }
             }
 
-            // Once streamed successfully, re-fetch conversations to get the updated ID/slug or newly created history
-            await fetchConversations();
+            // Once streamed successfully, re-fetch sidebar conversation list (slug/title updates etc.)
+            fetchConversations(); // fire-and-forget, no await needed here
 
-            // If it was a new conversation, select the most recently created one
             if (!isFollowUp) {
-                // Fetch the newest conversation
-                const token = (await supabase.auth.getSession()).data.session?.access_token;
+                // New conversation: fetch list to find the newly created ID, then select it.
+                // We pre-populate state so handleSelectConversation won't flash a skeleton.
+                const token2 = (await supabase.auth.getSession()).data.session?.access_token;
                 const freshRes = await axios.get(`${BACKEND_URL}/conversations`, {
-                    headers: { "Authorization": `${token}` }
+                    headers: { "Authorization": `${token2}` }
                 });
                 const list = freshRes.data.conversations || [];
                 if (list.length > 0) {
-                    // Sort latest to oldest
-                    const sorted = [...list].sort((a, b) => {
+                    const sorted = [...list].sort((a: ConversationHistory, b: ConversationHistory) => {
                         const timeA = a.messages?.[0]?.createdAt || "";
                         const timeB = b.messages?.[0]?.createdAt || "";
                         return new Date(timeB).getTime() - new Date(timeA).getTime();
                     });
                     const newest = sorted[0];
                     if (newest) {
-                        handleSelectConversation(newest.id);
+                        // Silently update the conversation id/slug without re-fetching messages
+                        setActiveConversation(prev => prev ? { ...prev, id: newest.id, slug: newest.slug } : prev);
+                        // Background-fetch full conversation to sync DB messages (no skeleton shown)
+                        const token3 = (await supabase.auth.getSession()).data.session?.access_token;
+                        axios.get(`${BACKEND_URL}/conversations/${newest.id}`, {
+                            headers: { "Authorization": `${token3}` }
+                        }).then(res => {
+                            if (res.data.conversation) {
+                                setActiveConversation(res.data.conversation);
+                                setStreamingAnswer("");
+                                setStreamingSources([]);
+                            }
+                        }).catch(console.error);
                     }
                 }
             } else {
-                handleSelectConversation(activeConversation.id);
+                // Follow-up: append the streamed assistant message directly to local state.
+                // No re-fetch, no skeleton — the user already sees the answer.
+                // Extract just the answer portion (before the <SOURCES> delimiter)
+                const answerOnly = rawData.includes("<SOURCES>")
+                    ? rawData.split("<SOURCES>")[0] || ""
+                    : rawData;
+                // Capture sources from state at this moment
+                const currentSources = streamingSources;
+                const assistantMsg = {
+                    id: Math.random().toString(),
+                    role: "ASSISTANT" as const,
+                    content: JSON.stringify({ answer: answerOnly, sources: currentSources }),
+                    createdAt: new Date().toISOString()
+                };
+                setActiveConversation(prev => prev ? {
+                    ...prev,
+                    messages: [...prev.messages, assistantMsg]
+                } : prev);
+                setStreamingAnswer("");
+                setStreamingSources([]);
             }
 
         } catch (err) {

@@ -42,3 +42,24 @@ export const PROMPT_TEMPLATE = `
     ## USER_QUERY
     {{USER_QUERY}}
 `
+
+export const NO_SEARCH_PROMPT_TEMPLATE = `
+    ## USER_QUERY
+    {{USER_QUERY}}
+
+    Note: No additional web search was performed for this follow-up. Use the conversation history and your own knowledge to answer.
+`
+
+export const WEB_SEARCH_DECISION_PROMPT = `
+    You are a routing assistant. Given a conversation history and a new follow-up query, decide whether a live web search is needed to answer it accurately.
+
+    Respond with ONLY one of these two words (no explanation, no punctuation):
+    - SEARCH   — if a web search would meaningfully improve the answer (e.g., current events, recent data, specific URLs/prices, facts that could have changed)
+    - NO_SEARCH — if the conversation history and general knowledge are sufficient (e.g., clarifications, definitions, follow-ups on already-retrieved info)
+
+    ## Conversation history
+    {{CONVERSATION_HISTORY}}
+
+    ## New follow-up query
+    {{USER_QUERY}}
+`

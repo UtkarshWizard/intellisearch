@@ -1,7 +1,7 @@
 import express from "express";
 import { tavily } from '@tavily/core';
 import OpenAI from "openai"
-import { PROMPT_TEMPLATE, SYSTEM_PROMPT } from "./prompt";
+import { PROMPT_TEMPLATE, SYSTEM_PROMPT, NO_SEARCH_PROMPT_TEMPLATE, WEB_SEARCH_DECISION_PROMPT } from "./prompt";
 import { prisma } from "./db";
 import { authMiddleware } from "./middleware/authMiddleware";
 import { rateLimiter } from "./middleware/rateLimiter";
@@ -201,13 +201,42 @@ app.post("/conversation/follow_up", authMiddleware, rateLimiter, async ( req, re
             return res.status(500).json({ error: "Internal Server Error" });
         }
 
-        const tavilyClient = tavily({ apiKey: process.env.TAVILY_API_KEY });
-        const webSearchResponse = await tavilyClient.search(query, {
-            includeAnswer: "basic",
-            searchDepth: "advanced"
+        const openai = new OpenAI({
+            baseURL: "https://openrouter.ai/api/v1",
+            apiKey: process.env.AI_GATEWAY_API_KEY
         });
-        const webSearchResult = webSearchResponse.results;
 
+        // Build a compact conversation history summary to feed into the routing decision
+        const conversationHistorySummary = conversation.messages.map(msg => {
+            if (msg.role === "USER") {
+                return `User: ${msg.content}`;
+            } else {
+                try {
+                    const parsed = JSON.parse(msg.content);
+                    return `Assistant: ${parsed.answer || msg.content}`;
+                } catch {
+                    return `Assistant: ${msg.content}`;
+                }
+            }
+        }).join("\n");
+
+        // Ask the agent (LLM) whether a web search is needed for this follow-up
+        const decisionPrompt = WEB_SEARCH_DECISION_PROMPT
+            .replace("{{CONVERSATION_HISTORY}}", conversationHistorySummary)
+            .replace("{{USER_QUERY}}", query);
+
+        const decisionResponse = await openai.chat.completions.create({
+            model: "auto",
+            messages: [{ role: "user", content: decisionPrompt }],
+            max_tokens: 10     // TO restrict the model to only output SEARCH or NO_SEARCH
+        });
+
+        const decisionText = (decisionResponse.choices[0]?.message?.content ?? "").trim().toUpperCase();
+        const needsWebSearch = decisionText.startsWith("SEARCH");
+
+        // console.log(`[follow_up] Web search decision for query "${query}": ${needsWebSearch ? "SEARCH" : "NO_SEARCH"}`);
+
+        // Build the messages array from conversation history for the final LLM call
         const messagesForLLM: { role: "system" | "user" | "assistant"; content: string }[] = [
             { role: "system", content: SYSTEM_PROMPT }
         ];
@@ -225,13 +254,28 @@ app.post("/conversation/follow_up", authMiddleware, rateLimiter, async ( req, re
             }
         }
 
-        const nextPrompt = PROMPT_TEMPLATE.replace("{{WEB_SEARCH_RESULTS}}", JSON.stringify(webSearchResult)).replace("{{USER_QUERY}}", query);
-        messagesForLLM.push({ role: "user", content: nextPrompt });
+        let sources: { url: string }[] = [];
 
-        const openai = new OpenAI({
-            baseURL: "https://openrouter.ai/api/v1",
-            apiKey: process.env.AI_GATEWAY_API_KEY
-        });
+        if (needsWebSearch) {
+            // Perform web search and include results in the prompt
+            const tavilyClient = tavily({ apiKey: process.env.TAVILY_API_KEY });
+            const webSearchResponse = await tavilyClient.search(query, {
+                includeAnswer: "basic",
+                searchDepth: "advanced"
+            });
+            const webSearchResult = webSearchResponse.results;
+            sources = webSearchResult.map(result => ({ url: result.url }));
+
+            const nextPrompt = PROMPT_TEMPLATE
+                .replace("{{WEB_SEARCH_RESULTS}}", JSON.stringify(webSearchResult))
+                .replace("{{USER_QUERY}}", query);
+            messagesForLLM.push({ role: "user", content: nextPrompt });
+        } else {
+            // No web search — answer from conversation history and general knowledge
+            const nextPrompt = NO_SEARCH_PROMPT_TEMPLATE
+                .replace("{{USER_QUERY}}", query);
+            messagesForLLM.push({ role: "user", content: nextPrompt });
+        }
 
         res.setHeader("Content-Type", "text/plain");
         res.setHeader("Cache-Control", "no-cache");
@@ -254,7 +298,6 @@ app.post("/conversation/follow_up", authMiddleware, rateLimiter, async ( req, re
         }
 
         res.write("\n<SOURCES>\n");
-        const sources = webSearchResult.map(result => ({ url: result.url }));
         res.write(JSON.stringify(sources));
         res.write("\n</SOURCES>\n");
 
