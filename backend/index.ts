@@ -160,7 +160,7 @@ app.post("/conversation", authMiddleware, rateLimiter, async (req, res) => {
     }
 });
 
-app.post("/conversation/follow_up", authMiddleware, async ( req, res) => {
+app.post("/conversation/follow_up", authMiddleware, rateLimiter, async ( req, res) => {
     const { conversationId, query } = req.body;
 
     if (!conversationId || !query) {
@@ -245,11 +245,6 @@ app.post("/conversation/follow_up", authMiddleware, async ( req, res) => {
             needsWebSearch = true;
             optimizedQuery = query;
         }
-
-        console.log({
-            needsWebSearch,
-            optimizedQuery
-        });
 
         console.log(`[follow_up] Web search decision for query "${query}": ${needsWebSearch ? "SEARCH" : "NO_SEARCH"}`);
 
