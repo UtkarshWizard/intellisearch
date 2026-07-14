@@ -15,7 +15,9 @@ const result = await Bun.build({
   target: "browser",
   sourcemap: "linked",
   define: {
-    "process.env.NODE_ENV": JSON.stringify("production"),
+    "process.env.NODE_ENV": JSON.stringify(process.env.NODE_ENV || "production"),
+    "process.env.BUN_PUBLIC_SUPABASE_URL": JSON.stringify(process.env.BUN_PUBLIC_SUPABASE_URL || ""),
+    "process.env.BUN_PUBLIC_SUPABASE_PUBLISHABLE_KEY": JSON.stringify(process.env.BUN_PUBLIC_SUPABASE_PUBLISHABLE_KEY || ""),
   },
 });
 
