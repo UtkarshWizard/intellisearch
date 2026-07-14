@@ -10,7 +10,6 @@ import {
     Search,
     Plus,
     LogOut,
-    Compass,
     Globe,
     BookOpen,
     Send,
@@ -25,6 +24,7 @@ import {
     User as UserIcon,
     ExternalLink
 } from "lucide-react";
+import { Logo } from "../Logo";
 
 interface ConversationHistory {
     id: string;
@@ -163,7 +163,7 @@ export default function Conversation() {
     const [activeConversation, setActiveConversation] = useState<ConversationHistory | null>(null);
     const [query, setQuery] = useState("");
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-    const [isDarkMode, setIsDarkMode] = useState(true);
+    const [isDarkMode, setIsDarkMode] = useState(() => document.documentElement.classList.contains("dark"));
     const [isLoading, setIsLoading] = useState(false);
     
     // Rename and Delete state
@@ -291,10 +291,12 @@ export default function Conversation() {
             root.classList.remove("dark");
             root.classList.add("light");
             setIsDarkMode(false);
+            localStorage.setItem("theme", "light");
         } else {
             root.classList.remove("light");
             root.classList.add("dark");
             setIsDarkMode(true);
+            localStorage.setItem("theme", "dark");
         }
     };
 
@@ -661,7 +663,7 @@ export default function Conversation() {
                 <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
                     <div className="p-4 flex items-center justify-between border-b border-slate-200 dark:border-[#212427]">
                         <span className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                            <Compass className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                            <Logo className="w-6 h-6" />
                             IntelliSearch
                         </span>
                         <button onClick={() => setIsSidebarOpen(false)} className="lg:hidden p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white rounded-md">
@@ -773,7 +775,7 @@ export default function Conversation() {
                         <Menu className="w-6 h-6" />
                     </button>
                     <span className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                        <Compass className="w-5 h-5 text-orange-600 dark:text-orange-400" />
+                        <Logo className="w-6 h-6" />
                         IntelliSearch
                     </span>
                     <button

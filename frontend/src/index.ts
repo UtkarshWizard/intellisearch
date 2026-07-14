@@ -3,6 +3,20 @@ import index from "./index.html";
 
 const server = serve({
   routes: {
+    "/logo.svg": {
+      GET: () => new Response(Bun.file(import.meta.dir + "/logo.svg"))
+    },
+    "/favicon.ico": {
+      GET: () => new Response(Bun.file(import.meta.dir + "/favicon.ico"))
+    },
+
+    "/auth/logo.svg": {
+      GET: () => new Response(Bun.file(import.meta.dir + "/logo.svg"))
+    },
+    "/auth/favicon.ico": {
+      GET: () => new Response(Bun.file(import.meta.dir + "/favicon.ico"))
+    },
+
     // Serve index.html for all unmatched routes.
     "/*": index,
 

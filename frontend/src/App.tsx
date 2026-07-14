@@ -5,10 +5,10 @@ import Conversation from "./components/ui/pages/conversation";
 export function App() {
   return (
     <BrowserRouter>
-    <Routes>
-      <Route path="/auth" element={<Auth />} />
-      <Route path="/" element={<Conversation />} />
-    </Routes>
+      <Routes>
+        <Route path="/auth" element={<Auth />} />
+        <Route path="/" element={<Conversation />} />
+      </Routes>
     </BrowserRouter>
   );
 }
